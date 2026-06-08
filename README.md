@@ -17,6 +17,14 @@ Add your Groq key to `.env`:
 GROQ_API_KEY=your_groq_api_key_here
 ```
 
+To use Chroma Cloud instead of local `chroma_db/`, also add:
+
+```env
+CHROMA_API_KEY=your_chroma_cloud_api_key_here
+CHROMA_TENANT=your_chroma_tenant_id_here
+CHROMA_DATABASE=your_chroma_database_name_here
+```
+
 Run locally:
 
 ```bash
@@ -39,7 +47,10 @@ Open:
    - Start command: `uvicorn api:app --host 0.0.0.0 --port $PORT`
 4. Add environment variable:
    - `GROQ_API_KEY`
+   - `CHROMA_API_KEY`
+   - `CHROMA_TENANT`
+   - `CHROMA_DATABASE`
 5. Deploy.
 6. Visit `/health` to verify the service is running.
 
-Generated folders like `chroma_db/` and `bm25_index/` are ignored because Render can rebuild them from the committed source PDFs.
+If Chroma Cloud variables are present, embeddings are stored in Chroma Cloud. Without them, the backend falls back to local `chroma_db/`. Generated folders like `chroma_db/` and `bm25_index/` are ignored because they can be rebuilt from the committed source PDFs.

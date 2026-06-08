@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import chromadb
 from langchain_chroma import Chroma
@@ -16,6 +17,31 @@ from langchain_huggingface import HuggingFaceEmbeddings
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+
+
+def is_chroma_cloud_enabled() -> bool:
+    """Return True when Chroma Cloud credentials are configured."""
+    return bool(os.getenv("CHROMA_API_KEY"))
+
+
+def get_chroma_client(persist_path: Path) -> Any:
+    """Create a Chroma Cloud client on Render or a local persistent client for development."""
+    if is_chroma_cloud_enabled():
+        logger.info(
+            "Connecting to Chroma Cloud. tenant_configured=%s database_configured=%s",
+            bool(os.getenv("CHROMA_TENANT")),
+            bool(os.getenv("CHROMA_DATABASE")),
+        )
+        cloud_kwargs = {"api_key": os.getenv("CHROMA_API_KEY")}
+        if os.getenv("CHROMA_TENANT"):
+            cloud_kwargs["tenant"] = os.getenv("CHROMA_TENANT")
+        if os.getenv("CHROMA_DATABASE"):
+            cloud_kwargs["database"] = os.getenv("CHROMA_DATABASE")
+        return chromadb.CloudClient(**cloud_kwargs)
+
+    persist_path.mkdir(parents=True, exist_ok=True)
+    logger.info("Connecting to local ChromaDB persistent store at: %s", persist_path.resolve())
+    return chromadb.PersistentClient(path=str(persist_path))
 
 
 @lru_cache(maxsize=1)
@@ -48,13 +74,11 @@ def create_vector_store(
         raise ValueError("No document chunks were provided for embedding.")
 
     persist_path = Path(persist_directory)
-    persist_path.mkdir(parents=True, exist_ok=True)
     collection_name = sanitize_collection_name(collection_name)
 
     try:
-        logger.info("Connecting to ChromaDB persistent store at: %s", persist_path.resolve())
-        client = chromadb.PersistentClient(path=str(persist_path))
-        logger.info("ChromaDB connection successful.")
+        client = get_chroma_client(persist_path)
+        logger.info("ChromaDB connection successful. mode=%s", "cloud" if is_chroma_cloud_enabled() else "local")
 
         existing_collection = None
         try:
@@ -77,7 +101,6 @@ def create_vector_store(
                     client=client,
                     collection_name=collection_name,
                     embedding_function=get_embedding_model(),
-                    persist_directory=str(persist_path),
                 )
 
             logger.warning(
@@ -91,14 +114,17 @@ def create_vector_store(
             client.delete_collection(collection_name)
 
         logger.info("Creating Chroma collection '%s' with %s document chunks.", collection_name, len(documents))
-        vector_store = Chroma.from_documents(
-            documents=documents,
-            embedding=get_embedding_model(),
-            client=client,
-            collection_name=collection_name,
-            collection_metadata={"embedding_model": EMBEDDING_MODEL_NAME},
-            persist_directory=str(persist_path),
-        )
+        chroma_kwargs = {
+            "documents": documents,
+            "embedding": get_embedding_model(),
+            "client": client,
+            "collection_name": collection_name,
+            "collection_metadata": {"embedding_model": EMBEDDING_MODEL_NAME},
+        }
+        if not is_chroma_cloud_enabled():
+            chroma_kwargs["persist_directory"] = str(persist_path)
+
+        vector_store = Chroma.from_documents(**chroma_kwargs)
         stored_count = vector_store._collection.count()
         logger.info(
             "Created Chroma collection '%s'. Requested chunks=%s, stored chunks=%s.",
@@ -119,12 +145,16 @@ def load_vector_store(
     """Load an existing Chroma vector store."""
     persist_path = Path(persist_directory)
     collection_name = sanitize_collection_name(collection_name)
-    logger.info("Loading Chroma collection '%s' from: %s", collection_name, persist_path.resolve())
-    return Chroma(
-        collection_name=collection_name,
-        embedding_function=get_embedding_model(),
-        persist_directory=str(persist_path),
-    )
+    client = get_chroma_client(persist_path)
+    logger.info("Loading Chroma collection '%s'. mode=%s", collection_name, "cloud" if is_chroma_cloud_enabled() else "local")
+    chroma_kwargs = {
+        "client": client,
+        "collection_name": collection_name,
+        "embedding_function": get_embedding_model(),
+    }
+    if not is_chroma_cloud_enabled():
+        chroma_kwargs["persist_directory"] = str(persist_path)
+    return Chroma(**chroma_kwargs)
 
 
 def get_collection_count(vector_store: Chroma) -> int:

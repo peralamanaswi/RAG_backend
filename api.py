@@ -40,6 +40,11 @@ def get_allowed_origins() -> List[str]:
     origins = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
     return sorted(set(DEFAULT_ALLOWED_ORIGINS + origins))
 
+
+def get_chroma_mode() -> str:
+    """Show whether this deployment is configured for Chroma Cloud or local ChromaDB."""
+    return "cloud" if os.getenv("CHROMA_API_KEY") else "local"
+
 app = FastAPI(title="Legal Document Explainer Backend", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -73,7 +78,6 @@ def corpus_signature(pdf_paths: List[Path]) -> str:
         stat = pdf_path.stat()
         digest.update(str(pdf_path.relative_to(SOURCE_DOCS_DIR)).encode("utf-8"))
         digest.update(str(stat.st_size).encode("utf-8"))
-        digest.update(str(int(stat.st_mtime)).encode("utf-8"))
     return digest.hexdigest()[:16]
 
 
@@ -119,7 +123,7 @@ def count_stored_chunks() -> int | None:
 @app.get("/health")
 def health() -> Dict[str, Any]:
     """Health check endpoint."""
-    return {"status": "ok", "model": DEFAULT_MODEL}
+    return {"status": "ok", "model": DEFAULT_MODEL, "chroma_mode": get_chroma_mode()}
 
 
 @app.get("/corpus/status")
@@ -130,6 +134,7 @@ def corpus_status() -> Dict[str, Any]:
         "pdf_count": len(pdf_paths),
         "minimum_required": MIN_DOCUMENTS,
         "collection_name": collection_name,
+        "chroma_mode": get_chroma_mode(),
         "stored_chunks": count_stored_chunks(),
         "folders": sorted({path.parent.name for path in pdf_paths}),
         "loaded_files": loaded_files or [str(path.relative_to(SOURCE_DOCS_DIR)) for path in pdf_paths],
