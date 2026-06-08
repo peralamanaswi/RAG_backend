@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import List
 
-import streamlit as st
 from langchain_core.documents import Document
 from sentence_transformers import CrossEncoder
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 RERANKER_MODEL_NAME = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
-@st.cache_resource(show_spinner=False)
+@lru_cache(maxsize=1)
 def get_reranker() -> CrossEncoder:
     """Load the cross-encoder reranker once."""
     logger.info("Initializing reranker model: %s", RERANKER_MODEL_NAME)

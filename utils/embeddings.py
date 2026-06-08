@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import List
 
@@ -11,14 +12,13 @@ import chromadb
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
-import streamlit as st
 
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 
-@st.cache_resource(show_spinner=False)
+@lru_cache(maxsize=1)
 def get_embedding_model() -> HuggingFaceEmbeddings:
     """Return the Sentence Transformers embedding model."""
     logger.info("Initializing embedding model: %s", EMBEDDING_MODEL_NAME)
