@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -26,13 +27,28 @@ CHROMA_DIR = BASE_DIR / "chroma_db"
 MIN_DOCUMENTS = 50
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://rag-frontend-ten-rho.vercel.app",
+]
+
+
+def get_allowed_origins() -> List[str]:
+    """Read comma-separated frontend origins from the environment."""
+    configured = os.getenv("FRONTEND_ORIGINS", "")
+    origins = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    return sorted(set(DEFAULT_ALLOWED_ORIGINS + origins))
+
 app = FastAPI(title="Legal Document Explainer Backend", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=get_allowed_origins(),
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,
 )
 
 vector_store = None
