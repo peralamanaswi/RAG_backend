@@ -12,11 +12,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from utils.embeddings import create_vector_store, get_collection_count
-from utils.hybrid_search import build_or_load_bm25_index
-from utils.pdf_loader import load_pdf_documents, split_documents
-from utils.rag_pipeline import DEFAULT_MODEL, ask_crag_question
-
 load_dotenv()
 
 logging.basicConfig(
@@ -29,6 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SOURCE_DOCS_DIR = BASE_DIR / "source_documents"
 CHROMA_DIR = BASE_DIR / "chroma_db"
 MIN_DOCUMENTS = 50
+DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 app = FastAPI(title="Legal Document Explainer Backend", version="1.0.0")
 app.add_middleware(
@@ -71,6 +67,10 @@ def ensure_vector_store():
     if vector_store is not None:
         return vector_store
 
+    from utils.embeddings import create_vector_store, get_collection_count
+    from utils.hybrid_search import build_or_load_bm25_index
+    from utils.pdf_loader import load_pdf_documents, split_documents
+
     pdf_paths = get_pdf_paths()
     if not pdf_paths:
         raise RuntimeError("No backend PDFs found in backend/source_documents.")
@@ -91,6 +91,15 @@ def ensure_vector_store():
     return vector_store
 
 
+def count_stored_chunks() -> int | None:
+    """Count Chroma chunks only after the vector store is already loaded."""
+    if vector_store is None:
+        return None
+    from utils.embeddings import get_collection_count
+
+    return get_collection_count(vector_store)
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
     """Health check endpoint."""
@@ -101,14 +110,11 @@ def health() -> Dict[str, Any]:
 def corpus_status() -> Dict[str, Any]:
     """Return backend corpus status."""
     pdf_paths = get_pdf_paths()
-    stored_chunks = None
-    if vector_store is not None:
-        stored_chunks = get_collection_count(vector_store)
     return {
         "pdf_count": len(pdf_paths),
         "minimum_required": MIN_DOCUMENTS,
         "collection_name": collection_name,
-        "stored_chunks": stored_chunks,
+        "stored_chunks": count_stored_chunks(),
         "folders": sorted({path.parent.name for path in pdf_paths}),
         "loaded_files": loaded_files or [str(path.relative_to(SOURCE_DOCS_DIR)) for path in pdf_paths],
     }
@@ -119,6 +125,8 @@ def ingest() -> Dict[str, Any]:
     """Build or load the backend corpus indexes."""
     try:
         store = ensure_vector_store()
+        from utils.embeddings import get_collection_count
+
         return {
             "status": "ready",
             "collection_name": collection_name,
@@ -137,10 +145,11 @@ def ask(request: AskRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
     try:
         store = ensure_vector_store()
+        from utils.rag_pipeline import ask_crag_question
+
         return ask_crag_question(store, request.question, chat_history=request.chat_history)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Question answering failed.")
         raise HTTPException(status_code=500, detail="Question answering failed.") from exc
-
