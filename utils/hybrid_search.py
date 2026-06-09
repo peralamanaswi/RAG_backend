@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import pickle
 import re
 from pathlib import Path
 from typing import Dict, List
 
 from langchain_core.documents import Document
-from rank_bm25 import BM25Okapi
 
 logger = logging.getLogger(__name__)
 
 BM25_DIR = Path("bm25_index")
 DENSE_WEIGHT = 0.7
 BM25_WEIGHT = 0.3
+ENABLE_BM25 = os.getenv("ENABLE_BM25", "false").lower() == "true"
 
 
 def _collection_name(vector_store) -> str:
@@ -43,9 +44,17 @@ def _hash_content(text: str) -> str:
 
 def save_bm25_index(collection_name: str, docs: List[Document]) -> None:
     """Build and persist a BM25 index for the uploaded document chunks."""
+    if not ENABLE_BM25:
+        logger.info("BM25 disabled; skipping sparse index persistence.")
+        return
     BM25_DIR.mkdir(parents=True, exist_ok=True)
     path = _index_path(collection_name)
     tokenized_docs = [_tokenize(doc.page_content) for doc in docs]
+    try:
+        from rank_bm25 import BM25Okapi
+    except ImportError as exc:
+        raise RuntimeError("rank-bm25 is required when ENABLE_BM25=true.") from exc
+
     payload = {
         "collection_name": collection_name,
         "docs": docs,
@@ -68,6 +77,9 @@ def load_bm25_index(collection_name: str) -> Dict:
 
 def build_or_load_bm25_index(collection_name: str, docs: List[Document]) -> Dict:
     """Load BM25 when available; otherwise build it during PDF upload."""
+    if not ENABLE_BM25:
+        logger.info("BM25 disabled; using dense Chroma retrieval only.")
+        return {}
     path = _index_path(collection_name)
     if path.exists():
         return load_bm25_index(collection_name)
@@ -113,16 +125,17 @@ def hybrid_retrieve(query: str, vector_store, top_k: int = 10) -> List[Document]
         logger.exception("ChromaDB dense retrieval failed.")
         dense_docs = []
 
-    try:
-        bm25_docs = _bm25_search(collection_name, query, top_k)
-        logger.info("BM25 retrieval returned %s chunks.", len(bm25_docs))
-        for rank, doc in enumerate(bm25_docs, start=1):
-            key = _hash_content(doc.page_content)
-            combined.setdefault(key, {"doc": doc, "score": 0.0})
-            combined[key]["score"] += BM25_WEIGHT * (1.0 / rank)
-            doc.metadata["bm25_rank"] = rank
-    except Exception as exc:
-        logger.exception("BM25 retrieval failed. Continuing with vector retrieval only.")
+    if ENABLE_BM25:
+        try:
+            bm25_docs = _bm25_search(collection_name, query, top_k)
+            logger.info("BM25 retrieval returned %s chunks.", len(bm25_docs))
+            for rank, doc in enumerate(bm25_docs, start=1):
+                key = _hash_content(doc.page_content)
+                combined.setdefault(key, {"doc": doc, "score": 0.0})
+                combined[key]["score"] += BM25_WEIGHT * (1.0 / rank)
+                doc.metadata["bm25_rank"] = rank
+        except Exception as exc:
+            logger.exception("BM25 retrieval failed. Continuing with vector retrieval only.")
 
     if not combined:
         return dense_docs[:top_k]

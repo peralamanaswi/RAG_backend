@@ -54,3 +54,18 @@ Open:
 6. Visit `/health` to verify the service is running.
 
 If Chroma Cloud variables are present, embeddings are stored in Chroma Cloud. Without them, the backend falls back to local `chroma_db/`. Generated folders like `chroma_db/` and `bm25_index/` are ignored because they can be rebuilt from the committed source PDFs.
+
+## Render Memory Profile
+
+The default Render configuration is optimized for the free 512 MB memory limit:
+
+- `EMBEDDING_BACKEND=onnx`
+- `CHROMA_ADD_BATCH_SIZE=32`
+- `ENABLE_RERANKER=false`
+- `ENABLE_BM25=false`
+- `ENABLE_OCR=false`
+- `TOKENIZERS_PARALLELISM=false`
+- `OMP_NUM_THREADS=1`
+- `MALLOC_ARENA_MAX=2`
+
+This avoids loading PyTorch, sentence-transformers, CrossEncoder reranking, and OCR packages in production. Keep Chroma Cloud enabled on Render by setting `CHROMA_API_KEY`, `CHROMA_TENANT`, and `CHROMA_DATABASE`.

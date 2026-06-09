@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any, Dict, List, Tuple
 
@@ -12,10 +13,10 @@ from analytics import elapsed_ms, now_ms
 from memory import detect_conversational_references, get_previous_chunks, get_recent_memory_context
 from utils.hybrid_search import hybrid_retrieve
 from utils.query_rewriter import rewrite_query
-from utils.reranker import rerank_documents
 from validator import evaluate_retrieval
 
 logger = logging.getLogger(__name__)
+ENABLE_RERANKER = os.getenv("ENABLE_RERANKER", "false").lower() == "true"
 
 
 def retrieve_crag(
@@ -102,7 +103,7 @@ def retrieve_crag(
         "query_type": query_type,
         "chunks_before": chunks_before,
         "chunks_after": len(filtered_docs),
-        "reranking": True,
+        "reranking": ENABLE_RERANKER,
         "retrieval_ms": elapsed_ms(started),
         "reranking_ms": reranking_ms,
         "correction_ms": correction_ms,
@@ -138,6 +139,8 @@ def _retrieve_and_rerank(
 
     started = now_ms()
     try:
+        from utils.reranker import rerank_documents
+
         reranked = rerank_documents(query, candidates, top_k=final_k)
         return reranked, elapsed_ms(started)
     except Exception:

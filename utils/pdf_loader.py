@@ -10,15 +10,10 @@ from typing import Iterable, List, Tuple
 import fitz
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from PIL import Image
-
-try:
-    import pytesseract
-except ImportError:  # pragma: no cover - handled at runtime for optional OCR support.
-    pytesseract = None
 
 logger = logging.getLogger(__name__)
 OCR_DPI = 200
+ENABLE_OCR = os.getenv("ENABLE_OCR", "false").lower() == "true"
 
 
 def ensure_directory(path: str | Path) -> Path:
@@ -49,8 +44,7 @@ def save_uploaded_files(uploaded_files: Iterable, upload_dir: str | Path = "uplo
 
 def _configure_tesseract() -> None:
     """Use an optional Tesseract path from the environment."""
-    if pytesseract is None:
-        return
+    import pytesseract
 
     tesseract_cmd = os.getenv("TESSERACT_CMD")
     if tesseract_cmd:
@@ -59,11 +53,13 @@ def _configure_tesseract() -> None:
 
 def _ocr_page(page: fitz.Page) -> str:
     """Extract text from a scanned page using OCR."""
-    if pytesseract is None:
+    if not ENABLE_OCR:
         raise RuntimeError(
-            "This PDF appears to be scanned. Install pytesseract and the Tesseract OCR app, "
-            "or upload a text-based PDF."
+            "This PDF appears to be scanned. OCR is disabled on this deployment to reduce memory usage."
         )
+
+    import pytesseract
+    from PIL import Image
 
     _configure_tesseract()
     try:
@@ -94,7 +90,7 @@ def extract_pdf_pages(pdf_path: str | Path) -> List[Document]:
                 text = page.get_text("text").strip()
                 extraction_method = "pymupdf"
 
-                if not text:
+                if not text and ENABLE_OCR:
                     logger.info("No selectable text on %s page %s; trying OCR.", path.name, index)
                     text = _ocr_page(page)
                     extraction_method = "ocr"
@@ -130,9 +126,9 @@ def load_pdf_documents(pdf_paths: Iterable[str | Path]) -> Tuple[List[Document],
         logger.info("Extracted %s readable pages from PDF: %s", len(pages), Path(pdf_path).name)
         all_pages.extend(pages)
 
-    combined_text = "\n\n".join(doc.page_content for doc in all_pages)
-    logger.info("Loaded %s total readable PDF pages. Combined chars=%s.", len(all_pages), len(combined_text))
-    return all_pages, combined_text
+    total_chars = sum(len(doc.page_content) for doc in all_pages)
+    logger.info("Loaded %s total readable PDF pages. Combined chars=%s.", len(all_pages), total_chars)
+    return all_pages, ""
 
 
 def split_documents(

@@ -22,7 +22,6 @@ except ModuleNotFoundError:
 
 from utils.hybrid_search import hybrid_retrieve
 from utils.query_rewriter import rewrite_query
-from utils.reranker import rerank_documents
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -172,6 +171,8 @@ class AdvancedLegalRetriever(BaseRetriever):
             return []
 
         try:
+            from utils.reranker import rerank_documents
+
             final_docs = rerank_documents(optimized_query, candidates, top_k=self.final_k)
         except Exception as exc:
             logger.exception("Reranker failed. Falling back to dense top %s retrieval.", self.final_k)

@@ -6,11 +6,6 @@ import logging
 import re
 from typing import Any, Dict, Iterable, List
 
-try:
-    from langchain.memory import ConversationBufferMemory
-except Exception:  # pragma: no cover - LangChain version compatibility.
-    ConversationBufferMemory = None
-
 logger = logging.getLogger(__name__)
 
 REFERENCE_WORDS = {"it", "its", "that", "those", "them", "previous", "earlier", "before"}
@@ -18,7 +13,9 @@ REFERENCE_WORDS = {"it", "its", "that", "those", "them", "previous", "earlier", 
 
 def build_conversation_memory(chat_history: Iterable[Dict[str, Any]], window: int = 3):
     """Build a ConversationBufferMemory object from recent Streamlit chat history."""
-    if ConversationBufferMemory is None:
+    try:
+        from langchain.memory import ConversationBufferMemory
+    except Exception:  # pragma: no cover - LangChain version compatibility.
         return None
 
     memory = ConversationBufferMemory(return_messages=False, input_key="question", output_key="answer")

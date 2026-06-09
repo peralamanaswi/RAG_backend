@@ -10,13 +10,34 @@ from pathlib import Path
 from typing import Any, List
 
 import chromadb
+from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "onnx").strip().lower()
+EMBEDDING_MODEL_NAME = (
+    "chroma-onnx-all-MiniLM-L6-v2"
+    if EMBEDDING_BACKEND == "onnx"
+    else os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
+)
+CHROMA_ADD_BATCH_SIZE = int(os.getenv("CHROMA_ADD_BATCH_SIZE", "32"))
+
+
+class ChromaOnnxEmbeddings(Embeddings):
+    """LangChain adapter for Chroma's lightweight ONNX MiniLM embedding function."""
+
+    def __init__(self) -> None:
+        self._embedding_function = ONNXMiniLM_L6_V2(preferred_providers=["CPUExecutionProvider"])
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        embeddings = self._embedding_function(texts)
+        return [embedding.astype("float32").tolist() for embedding in embeddings]
+
+    def embed_query(self, text: str) -> List[float]:
+        return self.embed_documents([text])[0]
 
 
 def is_chroma_cloud_enabled() -> bool:
@@ -45,13 +66,18 @@ def get_chroma_client(persist_path: Path) -> Any:
 
 
 @lru_cache(maxsize=1)
-def get_embedding_model() -> HuggingFaceEmbeddings:
-    """Return the Sentence Transformers embedding model."""
-    logger.info("Initializing embedding model: %s", EMBEDDING_MODEL_NAME)
+def get_embedding_model() -> Embeddings:
+    """Return the configured embedding model."""
+    logger.info("Initializing embedding model. backend=%s model=%s", EMBEDDING_BACKEND, EMBEDDING_MODEL_NAME)
+    if EMBEDDING_BACKEND == "onnx":
+        return ChromaOnnxEmbeddings()
+
+    from langchain_huggingface import HuggingFaceEmbeddings
+
     return HuggingFaceEmbeddings(
         model_name=EMBEDDING_MODEL_NAME,
         model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
+        encode_kwargs={"normalize_embeddings": True, "batch_size": CHROMA_ADD_BATCH_SIZE},
     )
 
 
@@ -113,18 +139,31 @@ def create_vector_store(
             )
             client.delete_collection(collection_name)
 
-        logger.info("Creating Chroma collection '%s' with %s document chunks.", collection_name, len(documents))
+        logger.info(
+            "Creating Chroma collection '%s' with %s document chunks. batch_size=%s.",
+            collection_name,
+            len(documents),
+            CHROMA_ADD_BATCH_SIZE,
+        )
         chroma_kwargs = {
-            "documents": documents,
-            "embedding": get_embedding_model(),
-            "client": client,
             "collection_name": collection_name,
+            "embedding_function": get_embedding_model(),
+            "client": client,
             "collection_metadata": {"embedding_model": EMBEDDING_MODEL_NAME},
         }
         if not is_chroma_cloud_enabled():
             chroma_kwargs["persist_directory"] = str(persist_path)
 
-        vector_store = Chroma.from_documents(**chroma_kwargs)
+        vector_store = Chroma(**chroma_kwargs)
+        for start in range(0, len(documents), CHROMA_ADD_BATCH_SIZE):
+            batch = documents[start : start + CHROMA_ADD_BATCH_SIZE]
+            vector_store.add_documents(batch)
+            logger.info(
+                "Added Chroma batch %s-%s of %s.",
+                start + 1,
+                min(start + len(batch), len(documents)),
+                len(documents),
+            )
         stored_count = vector_store._collection.count()
         logger.info(
             "Created Chroma collection '%s'. Requested chunks=%s, stored chunks=%s.",
