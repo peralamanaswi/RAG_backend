@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 SOURCE_DOCS_DIR = BASE_DIR / "source_documents"
-CHROMA_DIR = BASE_DIR / "chroma_db"
+CHROMA_DIR = Path("/tmp/chroma_db") if os.getenv("VERCEL") else BASE_DIR / "chroma_db"
 MIN_DOCUMENTS = 50
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
