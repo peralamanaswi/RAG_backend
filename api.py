@@ -25,6 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SOURCE_DOCS_DIR = BASE_DIR / "source_documents"
 CHROMA_DIR = Path("/tmp/chroma_db") if os.getenv("VERCEL") else BASE_DIR / "chroma_db"
 MIN_DOCUMENTS = 50
+MIN_STORED_CHUNKS = 10000
 DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 DEFAULT_ALLOWED_ORIGINS = [
@@ -76,7 +77,7 @@ def corpus_signature(pdf_paths: List[Path]) -> str:
     digest = hashlib.sha256()
     for pdf_path in pdf_paths:
         stat = pdf_path.stat()
-        digest.update(str(pdf_path.relative_to(SOURCE_DOCS_DIR)).encode("utf-8"))
+        digest.update(pdf_path.relative_to(SOURCE_DOCS_DIR).as_posix().encode("utf-8"))
         digest.update(str(stat.st_size).encode("utf-8"))
     return digest.hexdigest()[:16]
 
@@ -87,7 +88,7 @@ def ensure_vector_store():
     if vector_store is not None:
         return vector_store
 
-    from utils.embeddings import create_vector_store, get_collection_count
+    from utils.embeddings import create_vector_store, get_collection_count, get_existing_collection_count, load_vector_store
     from utils.hybrid_search import build_or_load_bm25_index
     from utils.pdf_loader import load_pdf_documents, split_documents
 
@@ -97,7 +98,13 @@ def ensure_vector_store():
 
     signature = corpus_signature(pdf_paths)
     collection_name = f"legal_docs_bge_{signature}"
-    loaded_files = [str(path.relative_to(SOURCE_DOCS_DIR)) for path in pdf_paths]
+    loaded_files = [path.relative_to(SOURCE_DOCS_DIR).as_posix() for path in pdf_paths]
+
+    existing_count = get_existing_collection_count(CHROMA_DIR, collection_name)
+    if existing_count and existing_count >= MIN_STORED_CHUNKS:
+        logger.info("Loading existing corpus collection. collection=%s stored=%s", collection_name, existing_count)
+        vector_store = load_vector_store(CHROMA_DIR, collection_name)
+        return vector_store
 
     logger.info("Loading backend corpus. pdfs=%s collection=%s", len(pdf_paths), collection_name)
     page_documents, _ = load_pdf_documents(pdf_paths)
@@ -114,7 +121,13 @@ def ensure_vector_store():
 def count_stored_chunks() -> int | None:
     """Count Chroma chunks only after the vector store is already loaded."""
     if vector_store is None:
-        return None
+        pdf_paths = get_pdf_paths()
+        if not pdf_paths:
+            return None
+        signature = corpus_signature(pdf_paths)
+        from utils.embeddings import get_existing_collection_count
+
+        return get_existing_collection_count(CHROMA_DIR, f"legal_docs_bge_{signature}")
     from utils.embeddings import get_collection_count
 
     return get_collection_count(vector_store)
@@ -137,7 +150,7 @@ def corpus_status() -> Dict[str, Any]:
         "chroma_mode": get_chroma_mode(),
         "stored_chunks": count_stored_chunks(),
         "folders": sorted({path.parent.name for path in pdf_paths}),
-        "loaded_files": loaded_files or [str(path.relative_to(SOURCE_DOCS_DIR)) for path in pdf_paths],
+        "loaded_files": loaded_files or [path.relative_to(SOURCE_DOCS_DIR).as_posix() for path in pdf_paths],
     }
 
 

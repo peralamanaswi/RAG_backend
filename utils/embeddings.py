@@ -9,6 +9,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, List
 
+if os.getenv("VERCEL"):
+    SERVERLESS_TMP = Path("/tmp")
+    SERVERLESS_CACHE = SERVERLESS_TMP / ".cache"
+    os.environ.setdefault("HOME", str(SERVERLESS_TMP))
+    os.environ.setdefault("XDG_CACHE_HOME", str(SERVERLESS_CACHE))
+    os.environ.setdefault("HF_HOME", str(SERVERLESS_CACHE / "huggingface"))
+    os.environ.setdefault("TRANSFORMERS_CACHE", str(SERVERLESS_CACHE / "huggingface" / "transformers"))
+    os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME", str(SERVERLESS_CACHE / "sentence-transformers"))
+else:
+    SERVERLESS_CACHE = None
+
 import chromadb
 from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from langchain_chroma import Chroma
@@ -16,6 +27,9 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
+
+if SERVERLESS_CACHE is not None:
+    ONNXMiniLM_L6_V2.DOWNLOAD_PATH = SERVERLESS_CACHE / "chroma" / "onnx_models" / ONNXMiniLM_L6_V2.MODEL_NAME
 
 EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "onnx").strip().lower()
 EMBEDDING_MODEL_NAME = (
@@ -116,7 +130,7 @@ def create_vector_store(
             metadata = existing_collection.metadata or {}
             stored_model = metadata.get("embedding_model")
             stored_count = existing_collection.count()
-            if stored_model == EMBEDDING_MODEL_NAME and stored_count > 0:
+            if stored_model == EMBEDDING_MODEL_NAME and stored_count >= len(documents):
                 logger.info(
                     "Loading existing Chroma collection '%s'. embedding_model=%s, stored_chunks=%s.",
                     collection_name,
@@ -130,7 +144,7 @@ def create_vector_store(
                 )
 
             logger.warning(
-                "Rebuilding Chroma collection '%s' because embedding model changed or collection is empty. "
+                "Rebuilding Chroma collection '%s' because embedding model changed or collection is incomplete. "
                 "stored_model=%s, current_model=%s, stored_chunks=%s.",
                 collection_name,
                 stored_model,
@@ -194,6 +208,20 @@ def load_vector_store(
     if not is_chroma_cloud_enabled():
         chroma_kwargs["persist_directory"] = str(persist_path)
     return Chroma(**chroma_kwargs)
+
+
+def get_existing_collection_count(
+    persist_directory: str | Path = "chroma_db",
+    collection_name: str = "legal_documents",
+) -> int | None:
+    """Return the collection count when it already exists, otherwise None."""
+    try:
+        persist_path = Path(persist_directory)
+        client = get_chroma_client(persist_path)
+        collection = client.get_collection(sanitize_collection_name(collection_name))
+        return collection.count()
+    except Exception:
+        return None
 
 
 def get_collection_count(vector_store: Chroma) -> int:

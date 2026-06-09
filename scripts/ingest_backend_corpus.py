@@ -38,9 +38,8 @@ def pdf_path_signature(pdf_paths: list[Path]) -> str:
     digest = hashlib.sha256()
     for pdf_path in pdf_paths:
         stat = pdf_path.stat()
-        digest.update(pdf_path.name.encode("utf-8"))
+        digest.update(pdf_path.relative_to(SOURCE_DOCS_DIR).as_posix().encode("utf-8"))
         digest.update(str(stat.st_size).encode("utf-8"))
-        digest.update(str(int(stat.st_mtime)).encode("utf-8"))
     return digest.hexdigest()[:16]
 
 
